@@ -2,7 +2,7 @@
 layout: post
 title:  "How to auditing changes in entity framework 6"
 date:   2024-03-18 18:46:37 +0100
-categories: jekyll update
+categories: dotnet entity-framework
 ---
 
 In this post I will show you how to audit changes in entity framework 6. This is a very common requirement in enterprise applications.
