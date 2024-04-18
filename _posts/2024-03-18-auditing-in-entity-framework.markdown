@@ -22,22 +22,7 @@ Our auditing solution will be taking snapshots of each auditable entity in json 
 
 Lets look at how our db schema will look like:
   
-  ```sql diagram
-
-
-  +-----------------+    +-----------------+    +-----------------+
-  |     Entity      |    |     Snapshot    |    |     AuditLog    |
-  +-----------------+    +-----------------+    +-----------------+
-  | Id              |    | Id              |    | Id              |
-  | CreatedAt       |    | CreatedAt       |    | CreatedAt       |
-  | UpdatedAt       |    | UpdatedAt       |    | UpdatedAt       |
-  | DeletedAt       |    | EntityId        |    | EntityId        |
-  |                 |    | EntityName      |    | EntityName      |
-  |                 |    | Snapshot        |    | Snapshot        |
-  |                 |    |                 |    |                 |
-  +-----------------+    +-----------------+    +-----------------+
-
-  ```
+  ![image info](./images/ER-AuditLog.png)
 
   The Snapshot table will hold the snapshots of the entities and their many-to-many relationships in json format. The AuditLog table group together multiple snapshots of entities that were audited during a single transaction. The term transaction here can refer to either a database transaction or a logical/business transaction. In our example we will use database transaction as a unit of work, mostly for simplicity, but still without sacrifising the flexibility of the solution.
 
@@ -163,6 +148,8 @@ Lets look at how our db schema will look like:
         }
     }
   {% endhighlight %}
+
+    Now this implementation of audit and rollback is a very basic one. Each object that implements an interface will be serialized into json and stored in the database, along with any FK relationships. To further improve the solution we can introduce a special treatment for auditing navigation properties.
 
 Check the code in the repo for full implementation.
 
