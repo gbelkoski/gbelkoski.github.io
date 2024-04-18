@@ -46,7 +46,7 @@ Lets look at how our db schema will look like:
   As a sample solution we will use a simple blog application with two entities: Post and Comment. The Post entity will have a one-to-many relationship with the Comment entity. We will audit changes to both entities. The solution will use entity framework 6, but similar approach can be used with entity framework core.
 
   {% highlight c# %}
-    public class Post
+    public class Post : IAuditable
     {
         public int Id { get; set; }
         public string Title { get; set; }
@@ -55,11 +55,16 @@ Lets look at how our db schema will look like:
         public DateTime UpdatedAt { get; set; }
         public DateTime? DeletedAt { get; set; }
         public virtual ICollection<Comment> Comments { get; set; }
+
+        public string GetEntityIdentifier()
+        {
+            return Id.ToString();
+        }
     }
   {% endhighlight %}
 
   {% highlight c# %}
-    public class Comment
+    public class Comment : IAuditable
     {
         public int Id { get; set; }
         public string Content { get; set; }
@@ -68,23 +73,97 @@ Lets look at how our db schema will look like:
         public DateTime? DeletedAt { get; set; }
         public int PostId { get; set; }
         public virtual Post Post { get; set; }
+
+        public string GetEntityIdentifier()
+        {
+            return Id.ToString();
+        }
     }
   {% endhighlight %}
 
-<!-- `YEAR-MONTH-DAY-title.MARKUP`
+  As you can notice both classes implement the IAuditable interface. This interface will be used to identify the entities that should be audited. The interface will have a single method that will return an entity identifier. This will be used to identify the entity in the audit log.
 
-Jekyll also offers powerful support for code snippets:
+  {% highlight c# %}
+    public interface IAuditable
+    {
+        string GetEntityIdentifier();
+    }
+  {% endhighlight %}
 
-{% highlight ruby %}
-def print_hi(name)
-  puts "Hi, #{name}"
-end
-print_hi('Tom')
-#=> prints 'Hi, Tom' to STDOUT.
-{% endhighlight %}
+  Now the next step is to override the SaveChanges method in the DbContext. When using entity framework 6 you can override the SaveChanges method in the DbContext to intercept the changes before they are persisted to the database. This is not the only way to intercept changes in entity framework, but it is the most convenient way for our purpose. In the SaveChanges method we will iterate over the entities that implement the IAuditable interface and are in the Added, Modified or Deleted state. We will then create a snapshot of the entity and persist it to the database.
 
-Check out the [Jekyll docs][jekyll-docs] for more info on how to get the most out of Jekyll. File all bugs/feature requests at [Jekyll’s GitHub repo][jekyll-gh]. If you have questions, you can ask them on [Jekyll Talk][jekyll-talk].
+  {% highlight c# %}
+    public class BlogDbContext : DbContext
+    {
+        public DbSet<Post> Posts { get; set; }
+        public DbSet<Comment> Comments { get; set; }
+        public DbSet<Snapshot> Snapshots { get; set; }
+        public DbSet<AuditLog> AuditLogs { get; set; }
 
-[jekyll-docs]: https://jekyllrb.com/docs/home
-[jekyll-gh]:   https://github.com/jekyll/jekyll
-[jekyll-talk]: https://talk.jekyllrb.com/ -->
+        public override int SaveChanges()
+        {
+            var entries = ChangeTracker.Entries().Where(e => e.Entity is IAuditable && (e.State == EntityState.Added || e.State == EntityState.Modified || e.State == EntityState.Deleted)).ToList();
+
+            foreach (var entry in entries)
+            {
+                var entity = entry.Entity as IAuditable;
+                var entityId = entity.GetEntityIdentifier();
+                var entityName = entity.GetType().Name;
+
+                var snapshot = new Snapshot
+                {
+                    CreatedAt = DateTime.Now,
+                    UpdatedAt = DateTime.Now,
+                    EntityId = entityId,
+                    EntityName = entityName,
+                    Snapshot = JsonConvert.SerializeObject(entity)
+                };
+
+                Snapshots.Add(snapshot);
+            }
+
+            return base.SaveChanges();
+        }
+    }
+  {% endhighlight %}
+
+  Taking the whole snapshot of the entity a simple way to enable rollback mechanism. Now because this is not the most efficient way to do this, storage wise, you might want to consider storing only the changes that were made to the entity. This will require a more complex implementation but it will save you a possibly lots of memory in the database. Other option is to purge the snapshots after a certain period of time, if the business case allows that. If it doesn't then you might need to migrate the snapshots to a different type of storage, like cold storage, to save on costs.
+
+  Let's now implement a rollback service. The rollback service will be used to revert the changes to the entity to a desired state. The rollback service will have a single method that will take the entity identifier and the snapshot identifier as arguments. The method will load the snapshot from the database and apply it to the entity.
+
+  {% highlight c# %}
+    public class RollbackService
+    {
+        private readonly BlogDbContext _dbContext;
+
+        public RollbackService(BlogDbContext dbContext)
+        {
+            _dbContext = dbContext;
+        }
+
+        public void Rollback(string entityIdentifier, int snapshotId)
+        {
+            var snapshot = _dbContext.Snapshots.Find(snapshotId);
+
+            if (snapshot == null)
+            {
+                throw new Exception("Snapshot not found");
+            }
+
+            var entity = _dbContext.Set(snapshot.EntityName).Find(entityIdentifier);
+
+            if (entity == null)
+            {
+                throw new Exception("Entity not found");
+            }
+
+            JsonConvert.PopulateObject(snapshot.Snapshot, entity);
+
+            _dbContext.SaveChanges();
+        }
+    }
+  {% endhighlight %}
+
+Check the code in the repo for full implementation.
+
+[ef-audit-sample]: https://github.com/gbelkoski/gbelkoski.github.io
